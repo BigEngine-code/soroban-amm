@@ -185,6 +185,14 @@ export function extractFromSource(source, file, contract) {
       shape,
       versioned: shape !== "unversioned",
       args: args_.map((a) => a.replace(/\s+/g, " ")),
+      payload_fields: (() => {
+        if (args_.length !== payloadArity) return null;
+        const fields = args_.map((a) => {
+          const plain = a.replace(/\s+/g, "").match(/^([A-Za-z_][A-Za-z0-9_]*)$/);
+          return plain ? plain[1] : null;
+        });
+        return fields.every((field) => field !== null) ? fields : null;
+      })(),
       source: `${file}:${lineOf(src, m.index)}`,
     });
   }

@@ -62,7 +62,9 @@ function sameShape(variant, site) {
     variant.fields.length === site.arity &&
     variant.topics === site.topics &&
     (variant.versioned !== false) === site.versioned &&
-    (variant.shape === "scalar") === (site.shape === "scalar")
+    (variant.shape === "scalar") === (site.shape === "scalar") &&
+    (!site.payload_fields ||
+      JSON.stringify(variant.fields) === JSON.stringify(site.payload_fields))
   );
 }
 

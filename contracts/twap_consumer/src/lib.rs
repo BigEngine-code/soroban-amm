@@ -530,6 +530,10 @@ impl TwapConsumer {
     /// covers [`Self::LONGEST_TWAP_WINDOW`] for a keeper saving as often as
     /// every 3 minutes. Once reached, each save drops the oldest snapshot.
     pub const MAX_SNAPSHOTS_PER_POOL: u32 = 512;
+    /// Maximum number of snapshots a permissionless prune call may remove
+    /// from one pool. This ceiling prevents a single oversized request from
+    /// wiping a pool's retained TWAP history.
+    pub const MAX_PRUNE_PER_CALL: u32 = 512;
 
     fn load_snapshots(env: &Env, pool: &Address) -> Vec<SnapshotEntry> {
         env.storage()
@@ -731,6 +735,7 @@ impl TwapConsumer {
         max_to_remove: u32,
     ) -> u32 {
         let total_count = snapshots.len();
+        let max_to_remove = max_to_remove.min(Self::MAX_PRUNE_PER_CALL);
         if max_to_remove == 0 || total_count == 0 {
             return 0;
         }
@@ -773,7 +778,8 @@ impl TwapConsumer {
         remove_count
     }
 
-    /// Permissionless bounded pruning for a pool according to the active retention policy.
+    /// Permissionless pruning for a pool according to the active retention
+    /// policy. A call may remove at most [`Self::MAX_PRUNE_PER_CALL`] snapshots.
     pub fn prune_snapshots(env: Env, pool: Address, max_to_remove: u32) -> u32 {
         Self::extend_instance_ttl(&env);
         let mut snapshots = Self::load_snapshots(&env, &pool);
@@ -784,8 +790,9 @@ impl TwapConsumer {
         removed
     }
 
-    /// Permissionless sweep across all tracked pools, removing up to `max_to_remove_per_pool`
-    /// eligible snapshots per pool. Fault-isolated so one pool cannot abort the sweep.
+    /// Permissionless sweep across all tracked pools. Each pool may have at
+    /// most [`Self::MAX_PRUNE_PER_CALL`] eligible snapshots removed per call;
+    /// Fault-isolated so one pool cannot abort the sweep.
     pub fn prune_all(env: Env, max_to_remove_per_pool: u32) -> u32 {
         Self::extend_instance_ttl(&env);
         let tracked: Vec<Address> = Self::get_tracked_pools(env.clone());
@@ -2184,6 +2191,62 @@ mod tests {
         let remaining = consumer.list_snapshot_timestamps(&pool, &0, &10);
         assert_eq!(remaining.get(0).unwrap(), 6);
         assert_eq!(remaining.get(4).unwrap(), 10);
+    }
+
+    #[test]
+    fn test_prune_snapshots_oversized_request_is_capped() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let pool = Address::generate(&env);
+        let consumer_addr = env.register_contract(None, TwapConsumer);
+        let consumer = TwapConsumerClient::new(&env, &consumer_addr);
+        consumer.initialize(&admin);
+
+        let timestamps: Vec<u64> = (1..=TwapConsumer::MAX_SNAPSHOTS_PER_POOL as u64)
+            .map(|i| i)
+            .collect();
+        seed_snapshots(&env, &consumer_addr, &pool, 1000, &timestamps);
+        env.ledger().set_timestamp(1_000_000);
+
+        let removed = consumer.prune_snapshots(&pool, &u32::MAX);
+        assert_eq!(removed, TwapConsumer::MAX_PRUNE_PER_CALL);
+        assert_eq!(
+            consumer.get_snapshot_count(&pool),
+            TwapConsumer::MAX_SNAPSHOTS_PER_POOL - TwapConsumer::MAX_PRUNE_PER_CALL
+        );
+    }
+
+    #[test]
+    fn test_prune_all_oversized_request_is_capped_per_pool() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let pool1 = Address::generate(&env);
+        let pool2 = Address::generate(&env);
+        let consumer_addr = env.register_contract(None, TwapConsumer);
+        let consumer = TwapConsumerClient::new(&env, &consumer_addr);
+        consumer.initialize(&admin);
+
+        consumer.track_pool(&pool1);
+        consumer.track_pool(&pool2);
+        let timestamps: Vec<u64> = (1..=TwapConsumer::MAX_SNAPSHOTS_PER_POOL as u64)
+            .map(|i| i)
+            .collect();
+        seed_snapshots(&env, &consumer_addr, &pool1, 1000, &timestamps);
+        seed_snapshots(&env, &consumer_addr, &pool2, 1000, &timestamps);
+        env.ledger().set_timestamp(1_000_000);
+
+        let removed = consumer.prune_all(&u32::MAX);
+        assert_eq!(removed, TwapConsumer::MAX_PRUNE_PER_CALL * 2);
+        assert_eq!(
+            consumer.get_snapshot_count(&pool1),
+            TwapConsumer::MAX_SNAPSHOTS_PER_POOL - TwapConsumer::MAX_PRUNE_PER_CALL
+        );
+        assert_eq!(
+            consumer.get_snapshot_count(&pool2),
+            TwapConsumer::MAX_SNAPSHOTS_PER_POOL - TwapConsumer::MAX_PRUNE_PER_CALL
+        );
     }
 
     #[test]

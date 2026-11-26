@@ -33,6 +33,15 @@ test("treats a parenthesised single value as a bare value, not a tuple", () => {
   assert.deepEqual([s.arity, s.shape], [1, "scalar"]);
 });
 
+test("captures plain payload identifiers and falls back for expressions", () => {
+  const [plain, expression] = site(`
+    emit_versioned_event!(env, (symbol_short!("plain"),), (campaign_id, amount));
+    emit_versioned_event!(env, (symbol_short!("expression"),), (provider.clone(),));
+  `);
+  assert.deepEqual(plain.payload_fields, ["campaign_id", "amount"]);
+  assert.equal(expression.payload_fields, null);
+});
+
 test("counts commas only at the top level", () => {
   const [s] = site(`emit_versioned_event!(env, (symbol_short!("ev"),), (f(a, b), (c, d), [e, f]));`);
   assert.equal(s.arity, 3);
@@ -90,6 +99,18 @@ test("fails when an emit site gains a payload field the schema lacks", () => {
   const drifted = sites.map((s) => (s === flash ? { ...s, arity: flash.arity + 1 } : s));
   const problems = findProblems(schema(), drifted, docs());
   assert.ok(problems.some((p) => /amm\.flash_loan is emitted with 5 payload field/.test(p)), problems.join("\n"));
+});
+
+test("fails when a plain payload field name differs from the schema", () => {
+  const sites = extractEmitSites();
+  const reward = sites.find((s) => s.contract === "incentive_campaigns" && s.event === "reward_distributed");
+  assert.ok(reward);
+  assert.ok(reward.payload_fields);
+  const drifted = sites.map((s) =>
+    s === reward ? { ...s, payload_fields: [...s.payload_fields.slice(0, 2), "renamed", ...s.payload_fields.slice(3)] } : s,
+  );
+  const problems = findProblems(schema(), drifted, docs());
+  assert.ok(problems.some((p) => /incentive_campaigns\.reward_distributed/.test(p)), problems.join("\n"));
 });
 
 test("fails when a contract starts emitting an event the schema does not know", () => {

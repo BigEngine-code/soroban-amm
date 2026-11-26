@@ -1,6 +1,6 @@
 //! Shared types that mirror on-chain data structures.
 
-use soroban_sdk::{contracterror, contracttype, Address};
+use soroban_sdk::{contracterror, contracttype, Address, Vec};
 
 // ── Token error codes ───────────────────────────────────────────────────────────
 
@@ -96,6 +96,12 @@ pub enum SdkAmmError {
     PoolDrained = 22,
     QuorumNotMet = 23,
     NoPendingProposal = 24,
+    QuorumNotReached = 25,
+    InvalidQuorum = 26,
+    EmergencyDelayNotElapsed = 27,
+    InvalidRecipient = 28,
+    MultisigGuardActive = 29,
+    InvalidEmergencyDelay = 30,
 }
 
 // ── Pool state ────────────────────────────────────────────────────────────────
@@ -127,6 +133,47 @@ pub struct SdkPoolInfo {
 /// Backward-compatible type alias so existing SDK consumers do not need to
 /// change their code.
 pub type PoolInfo = SdkPoolInfo;
+
+#[contracttype]
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmergencyAnnouncement {
+    pub to: Address,
+    pub announced_at: u64,
+}
+
+#[contracttype]
+#[derive(Debug, Clone, PartialEq)]
+pub struct CircuitBreakerConfig {
+    pub threshold_bps: i128,
+    pub cooldown_secs: u64,
+    pub triggered_at: u64,
+    pub tripped: bool,
+}
+
+#[contracttype]
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultisigConfig {
+    pub signers: Vec<Address>,
+    pub quorum: u32,
+}
+
+#[contracttype]
+#[derive(Debug, Clone, PartialEq)]
+pub enum MultisigAction {
+    EmergencyWithdraw(Address),
+    SetMultisig(Vec<Address>, u32),
+}
+
+#[contracttype]
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultisigProposal {
+    pub action: MultisigAction,
+    pub approvals: Vec<Address>,
+    pub expires_at: u64,
+    pub quorum_reached_at: u64,
+    pub epoch: u32,
+    pub executed: bool,
+}
 
 // ── Swap simulation ───────────────────────────────────────────────────────────
 
